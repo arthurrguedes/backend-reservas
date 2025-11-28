@@ -3,10 +3,12 @@ const axios = require('axios');
 
 // URL do serviço de catálogo
 const CATALOG_URL = 'http://localhost:4002/books';
+// URL do serviço de empréstimos (Adicionado para verificação de disponibilidade real - Opcional mas recomendado)
+// const LOANS_URL = 'http://localhost:4004/emprestimos'; 
 
 const reservasController = {
 
-    // --- CREATE (Já estava funcionando, mantivemos igual) ---
+    // --- CREATE (Mantido igual) ---
     createReservation: async (req, res) => {
         const { idLivro } = req.body;
         const idUsuarioFinal = req.userId; 
@@ -29,7 +31,7 @@ const reservasController = {
                 return res.status(404).json({ message: "Livro não encontrado no catálogo." });
             }
 
-            // 2. Conta Reservas (Local)
+            // 2. Conta Reservas Ativas (Local)
             const [reservasRes] = await connection.query(`
                 SELECT COUNT(*) as total 
                 FROM reserva 
@@ -37,6 +39,12 @@ const reservasController = {
             `, [idLivro]);
 
             const totalReservados = reservasRes[0].total || 0;
+            
+            // NOTA: Idealmente, você deveria subtrair também os livros que estão EMPRESTADOS atualmente.
+            // Disponibilidade = TotalFisico - ReservasAtivas - EmprestimosAtivos
+            // Como o serviço de empréstimos é novo, mantive sua lógica atual, mas fique ciente que 
+            // o sistema pode permitir reservar um livro que já está fisicamente com alguém se não houver essa verificação.
+            
             const disponiveis = totalFisico - totalReservados;
 
             if (disponiveis > 0) {
@@ -91,11 +99,10 @@ const reservasController = {
         }
     },
 
-    // --- READ: Minhas Reservas (CORRIGIDO) ---
+    // --- READ: Minhas Reservas ---
     getMyReservations: async (req, res) => {
         const idUsuario = req.userId;
         try {
-            // CORREÇÃO: idUsuario (não usuario_id) e dataSolicitacao (não dataReserva)
             const [reservas] = await db.query(`
                 SELECT * FROM reserva WHERE idUsuario = ? ORDER BY dataSolicitacao DESC
             `, [idUsuario]);
@@ -105,7 +112,7 @@ const reservasController = {
                     const bookResp = await axios.get(`${CATALOG_URL}/${r.idLivro}`);
                     return { 
                         idReserva: r.idReserva,
-                        dataReserva: r.dataSolicitacao, // Mapeia para o nome que o front espera
+                        dataReserva: r.dataSolicitacao,
                         prazoReserva: r.prazoEmprestimo,
                         statusReserva: r.statusReserva,
                         titulo: bookResp.data.titulo, 
@@ -123,18 +130,17 @@ const reservasController = {
         }
     },
 
-    // --- READ: Todas / Admin (CORRIGIDO) ---
-  getAllReservations: async (req, res) => {
+    // --- READ: Todas / Admin ---
+    getAllReservations: async (req, res) => {
         try {
             const [reservas] = await db.query(`SELECT * FROM reserva ORDER BY dataSolicitacao DESC`);
 
             const reservasCompletas = await Promise.all(reservas.map(async (r) => {
                 try {
-                    // Busca título do livro
                     const bookResp = await axios.get(`${CATALOG_URL}/${r.idLivro}`);
                     return { 
                         idReserva: r.idReserva,
-                        usuario_nome: `User #${r.idUsuario}`, // Placeholder
+                        usuario_nome: `User #${r.idUsuario}`,
                         titulo: bookResp.data.titulo,
                         dataReserva: r.dataSolicitacao,
                         prazoReserva: r.prazoEmprestimo, 
@@ -170,14 +176,38 @@ const reservasController = {
         }
     },
 
-    // --- UPDATE ---
+    // --- UPDATE (AJUSTADO PARA INTEGRAÇÃO COM EMPRÉSTIMOS) ---
     updateReservation: async (req, res) => {
         const { id } = req.params;
-        const { statusReserva } = req.body;
+        // Agora extraímos também dataRetirada, que vem do backend-emprestimos
+        const { statusReserva, dataRetirada } = req.body; 
+
         try {
-            await db.query('UPDATE reserva SET statusReserva = ? WHERE idReserva = ?', [statusReserva, id]);
-            res.json({ message: "Atualizado" });
+            // Construção dinâmica da query para atualizar um ou ambos os campos
+            let campos = [];
+            let valores = [];
+
+            if (statusReserva) {
+                campos.push('statusReserva = ?');
+                valores.push(statusReserva);
+            }
+            if (dataRetirada) {
+                campos.push('dataRetirada = ?');
+                valores.push(dataRetirada);
+            }
+
+            if (campos.length === 0) {
+                return res.status(400).json({ message: "Nenhum dado fornecido para atualização." });
+            }
+
+            valores.push(id); // ID para o WHERE
+
+            const query = `UPDATE reserva SET ${campos.join(', ')} WHERE idReserva = ?`;
+            
+            await db.query(query, valores);
+            res.json({ message: "Reserva atualizada com sucesso." });
         } catch (error) {
+            console.error("Erro Update Reservation:", error.message);
             res.status(500).json({ error: error.message });
         }
     },
