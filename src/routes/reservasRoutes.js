@@ -1,17 +1,17 @@
 const express = require('express');
 const router = express.Router();
-const reservasController = require('../controllers/ReservasController');
+const reservasController = require('../controllers/reservasController');
 const authMiddleware = require('../middlewares/auth'); 
 
-// Criar (Reserva ou Lista de Espera)
+// Criar reserva
 router.post('/', authMiddleware, reservasController.createReservation);
 
-// Ler (Listas)
+// Ler as listas
 router.get('/', authMiddleware, reservasController.getAllReservations); // Admin
 router.get('/my', authMiddleware, reservasController.getMyReservations); // User logado (usa req.userId)
 router.get('/user/:userId', authMiddleware, reservasController.getMyReservations); // Fallback
 
-// Ler (Detalhe)
+// Ler por ID
 router.get('/:id', authMiddleware, reservasController.getReservationById);
 
 // Atualizar (Admin estender prazo ou mudar status)

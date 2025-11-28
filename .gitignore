@@ -10,13 +10,6 @@ yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
 
-# Arquivos de Ambiente e Segredos (CRÍTICO: Nunca envie suas senhas)
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-
 # Pastas de Build (arquivos gerados automaticamente)
 dist/
 build/

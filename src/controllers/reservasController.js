@@ -1,14 +1,11 @@
 const db = require('../db');
 const axios = require('axios');
 
-// URL do serviço de catálogo
 const CATALOG_URL = 'http://localhost:4002/books';
-// URL do serviço de empréstimos (Adicionado para verificação de disponibilidade real - Opcional mas recomendado)
-// const LOANS_URL = 'http://localhost:4004/emprestimos'; 
 
 const reservasController = {
 
-    // --- CREATE (Mantido igual) ---
+    // Criar reserva (incluindo alertas de estoque)
     createReservation: async (req, res) => {
         const { idLivro } = req.body;
         const idUsuarioFinal = req.userId; 
@@ -21,17 +18,19 @@ const reservasController = {
         try {
             await connection.beginTransaction();
 
-            // 1. Busca Estoque (API)
+            // Busca estoque e título (vindo da API de catálogo)
             let totalFisico = 0;
+            let tituloLivro = "Desconhecido";
             try {
                 const response = await axios.get(`${CATALOG_URL}/${idLivro}`);
                 totalFisico = response.data.estoque || 0;
+                tituloLivro = response.data.titulo || "Sem título";
             } catch (error) {
                 await connection.rollback();
                 return res.status(404).json({ message: "Livro não encontrado no catálogo." });
             }
 
-            // 2. Conta Reservas Ativas (Local)
+            // Conta reservas ativas
             const [reservasRes] = await connection.query(`
                 SELECT COUNT(*) as total 
                 FROM reserva 
@@ -40,14 +39,20 @@ const reservasController = {
 
             const totalReservados = reservasRes[0].total || 0;
             
-            // NOTA: Idealmente, você deveria subtrair também os livros que estão EMPRESTADOS atualmente.
-            // Disponibilidade = TotalFisico - ReservasAtivas - EmprestimosAtivos
-            // Como o serviço de empréstimos é novo, mantive sua lógica atual, mas fique ciente que 
-            // o sistema pode permitir reservar um livro que já está fisicamente com alguém se não houver essa verificação.
-            
+            // Cálculo de disponibilidade
             const disponiveis = totalFisico - totalReservados;
 
+            console.log(`--- Análise de Estoque: ${tituloLivro} ---`);
+            console.log(`Total Físico: ${totalFisico} | Reservados: ${totalReservados} | Disponíveis: ${disponiveis}`);
+
+            // Se disponível
             if (disponiveis > 0) {
+                
+                // 
+                if (disponiveis === 1) {
+                    console.warn(`[ALERTA ADMIN] O livro "${tituloLivro}" (ID: ${idLivro}) está sendo reservado e agora está esgotado (0 disponíveis).`);
+                }
+
                 const prazo = new Date();
                 prazo.setDate(prazo.getDate() + 3);
 
@@ -58,14 +63,22 @@ const reservasController = {
                 );
 
                 await connection.commit();
+                
+                // Retorna sucesso
                 return res.status(201).json({ 
                     message: "Reserva realizada com sucesso!", 
                     type: "RESERVA",
-                    id: resReserva.insertId
+                    id: resReserva.insertId,
+                    estoqueRestante: disponiveis - 1 // Informação para o front
                 });
 
             } else {
-                // Lista de Espera
+                // Caso não esteja disponível
+                
+                // Lógica de aviso de indisponibilidade
+                console.warn(`[ALERTA ADMIN] Tentativa de reserva para "${tituloLivro}" que está indisponível.`);
+                
+                // Verifica se já está na lista
                 const [checkLista] = await connection.query(
                     'SELECT * FROM listaespera WHERE idLivro = ? AND idUsuario = ? AND statusFila = "Aguardando"',
                     [idLivro, idUsuarioFinal]
@@ -73,9 +86,14 @@ const reservasController = {
 
                 if (checkLista.length > 0) {
                     await connection.rollback();
-                    return res.status(409).json({ message: "Você já está na lista de espera." });
+                    // Aviso ao usuário (via response)
+                    return res.status(409).json({ 
+                        message: "Livro indisponível e você já está na lista de espera.",
+                        indisponivel: true 
+                    });
                 }
 
+                // Adiciona na lista de espera
                 const [resLista] = await connection.query(
                     `INSERT INTO listaespera (dataEntradaFila, statusFila, idUsuario, idLivro)
                      VALUES (NOW(), 'Aguardando', ?, ?)`,
@@ -83,10 +101,13 @@ const reservasController = {
                 );
 
                 await connection.commit();
+                
+                // Aviso ao Usuário (via response 201 mas indicando fila)
                 return res.status(201).json({ 
-                    message: "Livro indisponível. Entrou na Lista de Espera.", 
+                    message: "Livro indisponível no momento. Você entrou na Lista de Espera.", 
                     type: "ESPERA",
-                    id: resLista.insertId
+                    id: resLista.insertId,
+                    indisponivel: true
                 });
             }
 
@@ -176,14 +197,12 @@ const reservasController = {
         }
     },
 
-    // --- UPDATE (AJUSTADO PARA INTEGRAÇÃO COM EMPRÉSTIMOS) ---
+    // --- UPDATE ---
     updateReservation: async (req, res) => {
         const { id } = req.params;
-        // Agora extraímos também dataRetirada, que vem do backend-emprestimos
         const { statusReserva, dataRetirada } = req.body; 
 
         try {
-            // Construção dinâmica da query para atualizar um ou ambos os campos
             let campos = [];
             let valores = [];
 
@@ -200,7 +219,7 @@ const reservasController = {
                 return res.status(400).json({ message: "Nenhum dado fornecido para atualização." });
             }
 
-            valores.push(id); // ID para o WHERE
+            valores.push(id);
 
             const query = `UPDATE reserva SET ${campos.join(', ')} WHERE idReserva = ?`;
             
