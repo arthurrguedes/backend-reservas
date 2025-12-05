@@ -120,7 +120,7 @@ const reservasController = {
         }
     },
 
-    // --- READ: Minhas Reservas ---
+    // Minhas reservas
     getMyReservations: async (req, res) => {
         const idUsuario = req.userId;
         try {
@@ -151,7 +151,7 @@ const reservasController = {
         }
     },
 
-    // --- READ: Todas / Admin ---
+    // Todas / Admin
     getAllReservations: async (req, res) => {
         try {
             const [reservas] = await db.query(`SELECT * FROM reserva ORDER BY dataSolicitacao DESC`);
@@ -185,7 +185,7 @@ const reservasController = {
         }
     },
 
-    // --- GET BY ID ---
+    // GET by ID
     getReservationById: async (req, res) => {
         const { id } = req.params;
         try {
@@ -197,7 +197,7 @@ const reservasController = {
         }
     },
 
-    // --- UPDATE ---
+    // Update
     updateReservation: async (req, res) => {
         const { id } = req.params;
         const { statusReserva, dataRetirada } = req.body; 
@@ -231,7 +231,7 @@ const reservasController = {
         }
     },
 
-    // --- DELETE ---
+    // Delete
     deleteReservation: async (req, res) => {
         const { id } = req.params;
         try {
